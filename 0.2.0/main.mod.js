@@ -15,11 +15,10 @@ class RacingVizMod extends PolyMod {
 
   init = (pml) => {
     this.pml = pml;
-    window.__racingVizMod = this;
 
     const waitForCar = () => {
       if (typeof Car === "undefined") return setTimeout(waitForCar, 50);
-      
+
       pml.registerClassMixin(
         "Car.prototype",
         "update",
@@ -27,7 +26,7 @@ class RacingVizMod extends PolyMod {
         "this.position",
         (code) => {
           return `${code}
-            const mod = window.__racingVizMod;
+            const mod = ActivePolyModLoader.getMod("racing-viz-mod");
             if (!mod) return;
 
             if (game.localPlayer && game.localPlayer.car === this) {
@@ -56,7 +55,7 @@ class RacingVizMod extends PolyMod {
 
       this.overlay = document.createElement("canvas");
       this.overlay.style.cssText =
-        "position:absolute;top:0;left:0;pointer-events:none;z-index:9999;";
+        "position:absolute;top:0;left:0;pointer-events:none;z-index:9999;background:transparent;";
       gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling);
       this.ctx = this.overlay.getContext("2d");
 
