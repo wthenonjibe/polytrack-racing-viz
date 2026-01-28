@@ -1,4 +1,4 @@
-import { PolyMod, MixinType } from "https://cdn.jsdelivr.net/gh/PolyModLoader/PolyTrackMods/PolyModLoader@0.5.2/PolyModLoader.js";
+import { PolyMod, MixinType } from "https://cdn.polymodloader.com/PolyTrackMods/PolyModLoader/0.5.2/PolyModLoader.js";
 
 class RacingVizMod extends PolyMod {
   constructor() {
