@@ -1,7 +1,7 @@
 {
   "polymod": {
-    "name": "Trajectory Viz & Dynamic Racing Line",
-    "id": "racing-viz-mod",
+    "name": "Trajectory Viz + Minimap + Dynamic Racing Line",
+    "id": "racing-viz-minimap-mod",
     "author": "PlaneCrashColin",
     "targets": ["0.5.2"],
     "main": "main.mod.js"
