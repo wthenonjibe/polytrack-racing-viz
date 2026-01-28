@@ -3,7 +3,7 @@
     "name": "Trajectory Viz & Dynamic Racing Line",
     "id": "racing-viz-mod",
     "author": "PlaneCrashColin",
-    "targets": ["0.5.2"],
+    "targets": ["0.5.0", "0.5.1", "0.5.2"],
     "main": "main.mod.js"
   },
   "dependencies": []
