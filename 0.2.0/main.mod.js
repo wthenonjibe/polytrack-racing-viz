@@ -16,7 +16,7 @@ class RacingVizMod extends PolyMod {
   init = (pml) => {
     this.pml = pml;
 
-    // ✅ Expose the mod globally for mixins (fix for 0.5.2)
+    // ✅ Expose mod globally for mixins
     window.__racingVizMod = this;
 
     // Record trajectory in car update (local car only)
@@ -45,48 +45,54 @@ class RacingVizMod extends PolyMod {
   };
 
   postInit = () => {
-    const gameCanvas = document.querySelector("canvas");
-    if (!gameCanvas) return;
+    const waitForCanvas = () => {
+      const gameCanvas = document.querySelector("canvas");
+      if (!gameCanvas) return setTimeout(waitForCanvas, 100);
 
-    this.overlay = document.createElement("canvas");
-    this.overlay.style.cssText =
-      "position:absolute;top:0;left:0;pointer-events:none;z-index:9999;background:transparent;";
-    gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling);
-    this.ctx = this.overlay.getContext("2d");
+      // ✅ Create overlay
+      this.overlay = document.createElement("canvas");
+      this.overlay.style.cssText =
+        "position:absolute;top:0;left:0;pointer-events:none;z-index:9999;background:transparent;";
+      gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling);
+      this.ctx = this.overlay.getContext("2d");
 
-    this.resize = () => {
-      this.overlay.width = gameCanvas.clientWidth * window.devicePixelRatio;
-      this.overlay.height = gameCanvas.clientHeight * window.devicePixelRatio;
-      this.ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+      this.resize = () => {
+        this.overlay.width = gameCanvas.clientWidth * window.devicePixelRatio;
+        this.overlay.height = gameCanvas.clientHeight * window.devicePixelRatio;
+        this.ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+      };
+      this.resize();
+      new ResizeObserver(this.resize).observe(gameCanvas);
+
+      // Hotkeys
+      document.addEventListener("keydown", (e) => {
+        if (e.code === "KeyT") this.enabled = !this.enabled;
+        if (e.code === "KeyR") this.trail = [];
+      });
+
+      // Drawing loop
+      this.loop = () => {
+        if (!this.enabled) return requestAnimationFrame(this.loop);
+        this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+
+        const car = game?.localPlayer?.car;
+        const cam = game?.camera;
+        if (!car?.position || !cam?.position || !this.trail.length)
+          return requestAnimationFrame(this.loop);
+
+        this.drawTrajectory(this.ctx, cam, this.trail);
+        const currVel = car.velocity || { x: 0, y: 0, z: 0 };
+        const predTrail = this.predictPath(car.position, currVel);
+        this.drawPrediction(this.ctx, cam, predTrail);
+
+        requestAnimationFrame(this.loop);
+      };
+      this.loop();
+
+      console.log("Racing Viz initialized successfully (T toggle, R clear)");
     };
-    this.resize();
-    new ResizeObserver(this.resize).observe(gameCanvas);
 
-    document.addEventListener("keydown", (e) => {
-      if (e.code === "KeyT") this.enabled = !this.enabled;
-      if (e.code === "KeyR") this.trail = [];
-    });
-
-    this.loop = () => {
-      if (!this.enabled) return requestAnimationFrame(this.loop);
-      this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
-
-      const car = game?.localPlayer?.car;
-      const cam = game?.camera;
-      if (!car?.position || !cam?.position || !this.trail.length)
-        return requestAnimationFrame(this.loop);
-
-      this.drawTrajectory(this.ctx, cam, this.trail);
-
-      const currVel = car.velocity || { x: 0, y: 0, z: 0 };
-      const predTrail = this.predictPath(car.position, currVel);
-      this.drawPrediction(this.ctx, cam, predTrail);
-
-      requestAnimationFrame(this.loop);
-    };
-    this.loop();
-
-    console.log("Racing Viz initialized successfully (T toggle, R clear)");
+    waitForCanvas();
   };
 
   predictPath(pos, vel) {
@@ -193,8 +199,8 @@ class RacingVizMod extends PolyMod {
 
     const fovScale = 550;
     return {
-      x: dx / dz * fovScale + this.overlay.clientWidth / 2,
-      y: -(dy / dz * fovScale) + this.overlay.clientHeight / 2,
+      x: dx / dz * this.overlay.clientWidth / 2 + this.overlay.clientWidth / 2,
+      y: -(dy / dz) * this.overlay.clientHeight / 2 + this.overlay.clientHeight / 2,
       z: dz
     };
   }
