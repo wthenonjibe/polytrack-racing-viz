@@ -9,217 +9,201 @@ class RacingVizMod extends PolyMod {
     this.enabled = true;
     this.overlay = null;
     this.ctx = null;
-    this.resize = null;
-    this.loop = null;
     this.minimap = null;
     this.minimapCtx = null;
   }
 
   init = (pml) => {
     this.pml = pml;
-
-    // Track car positions
     pml.registerClassMixin(
       "Car.prototype",
       "update",
       MixinType.INSERT,
-      "this.position",
-      (code) => {
-        return `${code}
-          const mod = ActivePolyModLoader.getMod("racing-viz-minimap-mod");
-          if (game.localPlayer && game.localPlayer.car === this) {
-            const vel = this.velocity || {x:0,y:0,z:0};
-            const speed = Math.hypot(vel.x, vel.z);
-            mod.trail.push({
-              pos: {x: this.position.x, y: this.position.y, z: this.position.z},
-              speed
-            });
-            if (mod.trail.length > mod.maxTrail) mod.trail.shift();
-          }
-        `;
-      }
+      "this.position.x =",
+      (code) => `${code}
+        const mod = ActivePolyModLoader.getMod("racing-viz-mod");
+        if (mod && game?.localPlayer?.car === this) {
+          const vel = this.velocity || {x:0,y:0,z:0};
+          const speed = Math.hypot(vel.x, vel.z);
+          mod.trail.push({pos: {x: this.position.x, y: this.position.y - 0.5, z: this.position.z}, speed});
+          if (mod.trail.length > mod.maxTrail) mod.trail.shift();
+        }
+      `
     );
   };
 
   postInit = () => {
     const gameCanvas = document.querySelector('canvas');
-    if (!gameCanvas) return;
-
-    // Main overlay
+    if (!gameCanvas) return console.error('RacingViz: Canvas missing');
+    // Main track overlay (racing line only)
     this.overlay = document.createElement('canvas');
-    this.overlay.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:9998;background:transparent;';
-    gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling);
+    this.overlay.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:9998;';
+    gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas);
     this.ctx = this.overlay.getContext('2d');
-
-    // Minimap overlay
+    // Minimap (trajectory only)
     this.minimap = document.createElement('canvas');
-    this.minimap.style.cssText = 'position:absolute;bottom:10px;right:10px;width:200px;height:200px;pointer-events:none;z-index:9999;background:rgba(0,0,0,0.3);border:2px solid #fff;border-radius:8px;';
-    gameCanvas.parentNode.insertBefore(this.minimap, gameCanvas.nextSibling);
+    this.minimap.style.cssText = 'position:fixed;bottom:10px;right:10px;width:200px;height:200px;pointer-events:none;z-index:9999;background:rgba(0,0,0,0.4);border:2px solid #444;border-radius:8px;';
+    document.body.appendChild(this.minimap);
     this.minimapCtx = this.minimap.getContext('2d');
-
-    // Resize observer
-    this.resize = () => {
-      this.overlay.width = gameCanvas.clientWidth * window.devicePixelRatio;
-      this.overlay.height = gameCanvas.clientHeight * window.devicePixelRatio;
-      this.ctx.setTransform(1,0,0,1,0,0);
-      this.ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    // Resize
+    const resize = () => {
+      const dpr = window.devicePixelRatio;
+      this.overlay.width = gameCanvas.clientWidth * dpr;
+      this.overlay.height = gameCanvas.clientHeight * dpr;
+      this.ctx.scale(dpr, dpr);
+      this.minimap.width = 200 * dpr;
+      this.minimap.height = 200 * dpr;
+      this.minimapCtx.scale(dpr, dpr);
     };
-    this.resize();
-    new ResizeObserver(this.resize).observe(gameCanvas);
-
-    // Keybinds
+    resize();
+    window.addEventListener('resize', resize);
+    new ResizeObserver(gameCanvas, resize);
+    // Keys
     document.addEventListener('keydown', (e) => {
-      if (e.code === 'Digit7') {
-        this.enabled = !this.enabled;
-        console.log(`Racing Viz ${this.enabled ? 'ON' : 'OFF'}`);
-      }
-      if (e.code === 'Digit9') {
-        this.trail = [];
-        console.log('Trajectory cleared');
-      }
+      if (e.code === 'KeyT') this.enabled = !this.enabled, console.log(`Viz ${this.enabled ? 'ON' : 'OFF'}`);
+      if (e.code === 'KeyR') this.trail = [], console.log('Cleared');
     });
-
-    // Draw loop
-    this.loop = () => {
-      if (!this.enabled) return requestAnimationFrame(this.loop);
-      this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
-      this.minimapCtx.clearRect(0,0,this.minimap.width,this.minimap.height);
-
+    // Loop
+    let raf;
+    const loop = () => {
+      raf = requestAnimationFrame(loop);
+      if (!this.enabled) return;
+      this.ctx.clearRect(0, 0, gameCanvas.clientWidth, gameCanvas.clientHeight);
+      this.minimapCtx.clearRect(0, 0, 200, 200);
       const car = game?.localPlayer?.car;
-      if (!car?.position || !this.trail.length) return requestAnimationFrame(this.loop);
-
+      if (!car?.position || !this.trail.length) return;
       const cam = game?.camera;
-      if (!cam?.position) return requestAnimationFrame(this.loop);
-
-      // Draw main trajectory
-      this.drawTrajectory(this.ctx, cam, this.trail);
-
-      // Draw predicted racing line
-      const currVel = car.velocity || {x:0, y:0, z:0};
-      const predTrail = this.predictPath(car.position, currVel);
-      this.drawPrediction(this.ctx, cam, predTrail);
-
-      // Draw minimap
-      this.drawMinimap(this.minimapCtx, this.trail);
-
-      requestAnimationFrame(this.loop);
+      if (!cam?.position) return;
+      // Predict
+      const vel = car.velocity || {x:0,y:0,z:0};
+      const pred = this.predictPath(car.position, vel);
+      // Main: dynamic racing line on track
+      this.drawRacingLine(this.ctx, cam, pred);
+      // Minimap: trajectory viz
+      this.drawTrajectoryMinimap(this.minimapCtx, this.trail);
+      this.drawPredMinimap(this.minimapCtx, pred);
     };
-    this.loop();
-
-    console.log('Racing Viz + Minimap loaded - 7 toggle, 9 clear');
+    loop();
+    console.log('Minimap Trajectory + Track Racing Line - T/R');
   };
 
   predictPath(pos, vel) {
     const path = [{pos: {...pos}, speed: Math.hypot(vel.x, vel.z)}];
-    let cpos = {...pos};
-    let cvel = {...vel};
-    const dt = 1/60;
-    const drag = 0.985;
-    const accel = 4.2;
-    const turn = 1.2;
+    let cpos = {...pos}, cvel = {...vel};
+    const dt = 1/60, drag = 0.985, accel = 3.5, maxTurn = 1.8;
     for (let i = 0; i < this.predSteps; i++) {
       const speed = Math.hypot(cvel.x, cvel.z) || 0.01;
-      const fwdX = cvel.x / speed;
-      const fwdZ = cvel.z / speed;
+      const fwdX = cvel.x / speed, fwdZ = cvel.z / speed;
       cvel.x += fwdX * accel * dt;
       cvel.z += fwdZ * accel * dt;
-      cvel.x *= drag;
-      cvel.z *= drag;
-      const perpX = -fwdZ;
-      const perpZ = fwdX;
-      const steer = Math.sin(i * 0.15 + Date.now() * 0.0001) * turn * dt * speed * 0.02;
-      cvel.x += perpX * steer;
-      cvel.z += perpZ * steer;
+      cvel.x *= drag; cvel.z *= drag;
+      const perpX = -fwdZ, perpZ = fwdX;
+      const steer = Math.sin(i * 0.12 + performance.now() * 0.00005) * maxTurn * dt * speed * 0.015;
+      cvel.x += perpX * steer; cvel.z += perpZ * steer;
       cpos.x += cvel.x * dt;
-      cpos.y += cvel.y * dt;
+      cpos.y = pos.y - 0.5; // Snap to track
       cpos.z += cvel.z * dt;
-      path.push({pos: {...cpos}, speed: Math.hypot(cvel.x, cvel.z)});
+      path.push({pos: cpos, speed: Math.hypot(cvel.x, cvel.z)});
     }
     return path;
   }
 
-  drawTrajectory(ctx, cam, trail) {
-    const n = trail.length;
-    ctx.lineWidth = 3.5;
-    ctx.lineCap = 'round';
-    for (let i = 0; i < n-1; i++) {
-      const p1 = trail[i], p2 = trail[i+1];
-      const alpha = (i/n)*0.85;
-      const normSpeed = Math.min(1, (p1.speed+p2.speed)/2/85);
-      const hue = 220 - normSpeed*60;
-      ctx.strokeStyle = `hsla(${hue},85%,65%,${alpha})`;
-      const s1 = this.worldToScreen(p1.pos, cam);
-      const s2 = this.worldToScreen(p2.pos, cam);
-      if (s1?.z>0.1 && s2?.z>0.1) {
-        ctx.beginPath();
-        ctx.moveTo(s1.x,s1.y);
-        ctx.lineTo(s2.x,s2.y);
-        ctx.stroke();
-      }
-    }
-  }
-
-  drawPrediction(ctx, cam, pred) {
+  drawRacingLine(ctx, cam, pred) {
     const n = pred.length;
-    ctx.lineWidth = 5;
-    ctx.lineCap = 'round';
-    for (let i = 0; i<n-1; i++){
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    let prevDir = null;
+    for (let i = 0; i < n - 1; i++) {
       const p1 = pred[i], p2 = pred[i+1];
-      const deltaV = p2.speed - p1.speed;
-      const hue = deltaV>0.8?130:deltaV>-0.8?50:5;
-      const alpha = (1-i/n)*0.95;
-      ctx.strokeStyle = `hsla(${hue},100%,55%,${alpha})`;
+      const dir = {x: p2.pos.x - p1.pos.x, z: p2.pos.z - p1.pos.z};
+      const len = Math.hypot(dir.x, dir.z) || 0.01;
+      const normDir = {x: dir.x/len, z: dir.z/len};
+      const speedAvg = (p1.speed + p2.speed)/2;
+      let turnAngle = 0;
+      if (prevDir) {
+        const dot = prevDir.x * normDir.x + prevDir.z * normDir.z;
+        turnAngle = Math.acos(Math.max(-1, Math.min(1, dot)));
+      }
+      prevDir = normDir;
+      const sharpness = Math.min(1, (turnAngle * speedAvg) / (Math.PI * 40)); // Tune max ~40
+      const hue = 120 - sharpness * 120; // Green 120 → Red 0
+      const alpha = (1 - i/n) * 0.9;
+      ctx.lineWidth = 6 + sharpness * 4;
+      ctx.strokeStyle = `hsla(${hue}, 100%, 50%, ${alpha})`;
       const s1 = this.worldToScreen(p1.pos, cam);
       const s2 = this.worldToScreen(p2.pos, cam);
-      if (s1?.z>0.1 && s2?.z>0.1){
+      if (s1?.z > 0 && s2?.z > 0) {
         ctx.beginPath();
-        ctx.moveTo(s1.x,s1.y);
-        ctx.lineTo(s2.x,s2.y);
+        ctx.moveTo(s1.x, s1.y);
+        ctx.lineTo(s2.x, s2.y);
         ctx.stroke();
+        // Arrows every 8 segs
+        if (i % 8 === 0 && i > 5) {
+          const ang = Math.atan2(s2.y - s1.y, s2.x - s1.x);
+          const alen = 12, aang = Math.PI/5;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(s2.x, s2.y);
+          ctx.lineTo(s2.x - alen*Math.cos(ang - aang), s2.y - alen*Math.sin(ang - aang));
+          ctx.lineTo(s2.x, s2.y);
+          ctx.lineTo(s2.x - alen*Math.cos(ang + aang), s2.y - alen*Math.sin(ang + aang));
+          ctx.closePath();
+          ctx.fillStyle = `hsla(${hue}, 100%, 50%, ${alpha})`;
+          ctx.fill();
+          ctx.stroke();
+        }
       }
     }
   }
 
-  drawMinimap(ctx, trail){
-    const w = ctx.canvas.width, h = ctx.canvas.height;
-    ctx.fillStyle = "rgba(255,255,255,0.2)";
-    ctx.fillRect(0,0,w,h);
-
-    const len = trail.length;
-    for(let i=0;i<len;i++){
-      const p = trail[i].pos;
-      const x = (p.x % 500)/500 * w;
-      const y = (p.z % 500)/500 * h;
-      ctx.fillStyle = `rgba(50,200,50,0.7)`;
-      ctx.fillRect(x,y,2,2);
+  drawTrajectoryMinimap(ctx, trail) {
+    const w = 200, h = 200;
+    ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < trail.length; i++) {
+      const p = trail[i];
+      const x = (p.pos.x % 1024 / 1024) * w;
+      const y = (p.pos.z % 1024 / 1024) * h;
+      const alpha = i / trail.length;
+      ctx.globalAlpha = alpha * 0.8;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+      // Dots
+      ctx.fillStyle = `rgba(0,255,136,${alpha})`;
+      ctx.fillRect(x-1, y-1, 2, 2);
     }
+    ctx.stroke(); ctx.globalAlpha = 1;
+  }
+
+  drawPredMinimap(ctx, pred) {
+    const w = 200, h = 200;
+    ctx.strokeStyle = '#ffaa00'; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    for (let i = 0; i < pred.length; i += 3) {
+      const p = pred[i];
+      const x = (p.pos.x % 1024 / 1024) * w;
+      const y = (p.pos.z % 1024 / 1024) * h;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke(); ctx.globalAlpha = 1;
   }
 
   worldToScreen(pos, cam) {
-    let dx = pos.x - cam.position.x;
-    let dy = pos.y - cam.position.y;
-    let dz = pos.z - cam.position.z;
-
-    const yaw = cam.rotation?.yaw || cam.heading || 0;
+    let dx = pos.x - (cam.position?.x || 0);
+    let dy = pos.y - (cam.position?.y || 0);
+    let dz = pos.z - (cam.position?.z || 0);
+    const yaw = cam.rotation?.yaw || cam.heading || cam.yaw || 0;
     const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
-    const rx = dx * cy - dz * sy;
-    const rz = dx * sy + dz * cy;
-    dx = rx; dz = rz;
-
+    [dx, dz] = [dx * cy - dz * sy, dx * sy + dz * cy];
     const pitch = cam.rotation?.pitch || cam.pitch || 0;
     const cp = Math.cos(-pitch), sp = Math.sin(-pitch);
-    const ry = dy * cp - dz * sp;
-    dz = dy * sp + dz * cp;
-    dy = ry;
-
-    if (dz < 0.1) return null;
-
-    const fovScale = 550;
-    const w = this.overlay.clientWidth / 2;
-    const h = this.overlay.clientHeight / 2;
+    [dy, dz] = [dy * cp - dz * sp, dy * sp + dz * cp];
+    if (dz < 0.01) return null;
+    const fov = 600 / dz;
     return {
-      x: dx / dz * fovScale + w,
-      y: -(dy / dz * fovScale) + h,
+      x: dx * fov + this.overlay.clientWidth / 2,
+      y: -dy * fov + this.overlay.clientHeight / 2,
       z: dz
     };
   }
