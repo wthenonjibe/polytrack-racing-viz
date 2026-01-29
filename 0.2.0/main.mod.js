@@ -12,26 +12,23 @@ class RacingVizMod extends PolyMod {
     this.minimap = null;
     this.minimapCtx = null;
     this.lastRecordTime = 0;
+    this.gameReady = false;
   }
 
   postInit = () => {
     const gameCanvas = document.querySelector('canvas');
     if (!gameCanvas) {
-      console.error('[RacingViz] Canvas not found - aborting init');
+      console.error('[RacingViz] Canvas not found');
       return;
     }
 
-    // Main overlay for racing line
+    // Main overlay (racing line on track)
     this.overlay = document.createElement('canvas');
     this.overlay.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:9998;';
-    gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling || gameCanvas);
+    gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling);
     this.ctx = this.overlay.getContext('2d');
-    if (!this.ctx) {
-      console.error('[RacingViz] 2D context failed');
-      return;
-    }
 
-    // Minimap for trajectory
+    // Minimap (trajectory history)
     this.minimap = document.createElement('canvas');
     this.minimap.style.cssText = 'position:fixed;bottom:10px;right:10px;width:200px;height:200px;pointer-events:none;z-index:9999;background:rgba(0,0,0,0.4);border:2px solid #444;border-radius:8px;';
     document.body.appendChild(this.minimap);
@@ -64,18 +61,29 @@ class RacingVizMod extends PolyMod {
       }
     });
 
-    // RAF loop - poll car position here (safe, late)
+    // Wait until game is ready, then start loop
+    const waitForGame = setInterval(() => {
+      if (window.game && window.game.localPlayer && window.game.camera) {
+        this.gameReady = true;
+        clearInterval(waitForGame);
+        console.log('[RacingViz] Game ready – starting loop');
+        this.startLoop();
+      }
+    }, 100);
+  };
+
+  startLoop = () => {
     const loop = () => {
       requestAnimationFrame(loop);
-      if (!this.enabled) return;
+      if (!this.enabled || !this.gameReady) return;
 
-      this.ctx.clearRect(0, 0, gameCanvas.clientWidth, gameCanvas.clientHeight);
+      this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
       this.minimapCtx.clearRect(0, 0, 200, 200);
 
-      const car = game?.localPlayer?.car;
-      if (!car || !car.position) return;
+      const car = window.game?.localPlayer?.car;
+      if (!car?.position) return;
 
-      // Record trail ~30fps
+      // Record trail (~30 fps)
       const now = performance.now();
       if (now - this.lastRecordTime > 33) {
         const vel = car.velocity || {x:0, y:0, z:0};
@@ -88,8 +96,8 @@ class RacingVizMod extends PolyMod {
         this.lastRecordTime = now;
       }
 
-      const cam = game?.camera;
-      if (!cam || !cam.position) return;
+      const cam = window.game?.camera;
+      if (!cam?.position) return;
 
       const pred = this.predictPath(car.position, car.velocity || {x:0,y:0,z:0});
 
@@ -98,12 +106,7 @@ class RacingVizMod extends PolyMod {
       this.drawPredMinimap(this.minimapCtx, pred);
     };
     loop();
-
-    console.log('[RacingViz] Loaded successfully - T toggle / R clear');
   };
-
-  // predictPath, drawRacingLine, drawTrajectoryMinimap, drawPredMinimap, worldToScreen functions remain the same as previous version
-  // (copy them from your last working code or the one I sent before – they didn't change)
 
   predictPath(pos, vel) {
     const path = [{pos: {...pos}, speed: Math.hypot(vel.x, vel.z)}];
@@ -135,7 +138,6 @@ class RacingVizMod extends PolyMod {
   }
 
   drawRacingLine(ctx, cam, pred) {
-    // ... (same as before - copy from previous)
     const n = pred.length;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
