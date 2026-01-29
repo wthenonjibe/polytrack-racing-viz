@@ -1,4 +1,4 @@
-import { PolyMod, MixinType } from "https://cdn.polymodloader.com/PolyTrackMods/PolyModLoader/0.5.2/PolyModLoader.js";
+import { PolyMod } from "https://cdn.polymodloader.com/PolyTrackMods/PolyModLoader/0.5.2/PolyModLoader.js";
 
 class RacingVizMod extends PolyMod {
   constructor() {
@@ -11,64 +11,38 @@ class RacingVizMod extends PolyMod {
     this.ctx = null;
     this.minimap = null;
     this.minimapCtx = null;
+    this.lastRecordTime = 0;
   }
-
-  init = (pml) => {
-    this.pml = pml;
-    // Record trail positions via mixin on Car.update
-    pml.registerClassMixin(
-      "Car.prototype",
-      "update",
-      MixinType.INSERT,
-      "this.position.x =",
-      (code) => `${code}
-        try {
-          const mod = ActivePolyModLoader?.getMod?.("racing-viz-mod");
-          if (mod && game?.localPlayer?.car === this) {
-            const vel = this.velocity || {x:0, y:0, z:0};
-            const speed = Math.hypot(vel.x, vel.z);
-            mod.trail.push({
-              pos: {x: this.position.x, y: this.position.y - 0.5, z: this.position.z},
-              speed
-            });
-            if (mod.trail.length > mod.maxTrail) mod.trail.shift();
-          }
-        } catch (e) {
-          console.warn("[RacingVizMod] Trail push error:", e);
-        }
-      `
-    );
-  };
 
   postInit = () => {
     const gameCanvas = document.querySelector('canvas');
     if (!gameCanvas) {
-      console.error('[RacingVizMod] No game canvas found - cannot initialize overlays');
+      console.error('[RacingVizMod] No game canvas found - cannot initialize');
       return;
     }
 
-    // Main overlay for track racing line
+    // Main overlay (racing line on track)
     this.overlay = document.createElement('canvas');
-    this.overlay.style.cssText = 'position:absolute; top:0; left:0; pointer-events:none; z-index:9998; background:transparent;';
+    this.overlay.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:9998;';
     gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling);
     this.ctx = this.overlay.getContext('2d');
 
-    // Minimap for trajectory history
+    // Minimap (trajectory history)
     this.minimap = document.createElement('canvas');
-    this.minimap.style.cssText = 'position:fixed; bottom:10px; right:10px; width:200px; height:200px; pointer-events:none; z-index:9999; background:rgba(0,0,0,0.4); border:2px solid #444; border-radius:8px;';
+    this.minimap.style.cssText = 'position:fixed;bottom:10px;right:10px;width:200px;height:200px;pointer-events:none;z-index:9999;background:rgba(0,0,0,0.4);border:2px solid #444;border-radius:8px;';
     document.body.appendChild(this.minimap);
     this.minimapCtx = this.minimap.getContext('2d');
 
-    // Handle resize + DPR
+    // Resize handler
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       this.overlay.width = gameCanvas.clientWidth * dpr;
       this.overlay.height = gameCanvas.clientHeight * dpr;
-      this.ctx.scale(dpr, dpr);
+      if (this.ctx) this.ctx.scale(dpr, dpr);
 
       this.minimap.width = 200 * dpr;
       this.minimap.height = 200 * dpr;
-      this.minimapCtx.scale(dpr, dpr);
+      if (this.minimapCtx) this.minimapCtx.scale(dpr, dpr);
     };
     resize();
     window.addEventListener('resize', resize);
@@ -78,43 +52,50 @@ class RacingVizMod extends PolyMod {
     document.addEventListener('keydown', (e) => {
       if (e.code === 'KeyT') {
         this.enabled = !this.enabled;
-        console.log(`[RacingViz] ${this.enabled ? 'ENABLED' : 'DISABLED'}`);
+        console.log(`[RacingVizMod] ${this.enabled ? 'ENABLED' : 'DISABLED'}`);
       }
       if (e.code === 'KeyR') {
         this.trail = [];
-        console.log('[RacingViz] Trail cleared');
+        console.log('[RacingVizMod] Trail cleared');
       }
     });
 
-    // Main render loop
+    // Main loop
     const loop = () => {
       requestAnimationFrame(loop);
       if (!this.enabled) return;
 
-      // Clear overlays
       this.ctx.clearRect(0, 0, gameCanvas.clientWidth, gameCanvas.clientHeight);
       this.minimapCtx.clearRect(0, 0, 200, 200);
 
       const car = game?.localPlayer?.car;
-      if (!car?.position || this.trail.length === 0) return;
+      if (!car?.position) return;
+
+      // Poll & record trail (every ~33ms = ~30fps to avoid spam)
+      const now = performance.now();
+      if (now - this.lastRecordTime > 33) {
+        const vel = car.velocity || {x:0, y:0, z:0};
+        const speed = Math.hypot(vel.x, vel.z);
+        this.trail.push({
+          pos: {x: car.position.x, y: car.position.y - 0.5, z: car.position.z},
+          speed
+        });
+        if (this.trail.length > this.maxTrail) this.trail.shift();
+        this.lastRecordTime = now;
+      }
 
       const cam = game?.camera;
       if (!cam?.position) return;
 
-      // Generate predicted path
-      const vel = car.velocity || {x:0, y:0, z:0};
-      const pred = this.predictPath(car.position, vel);
+      const pred = this.predictPath(car.position, car.velocity || {x:0,y:0,z:0});
 
-      // Draw racing line on main view (projected on track)
       this.drawRacingLine(this.ctx, cam, pred);
-
-      // Draw trajectory history on minimap
       this.drawTrajectoryMinimap(this.minimapCtx, this.trail);
       this.drawPredMinimap(this.minimapCtx, pred);
     };
     loop();
 
-    console.log('[RacingVizMod] Loaded – T = toggle, R = clear trail');
+    console.log('[RacingVizMod] Loaded – T toggle, R clear trail');
   };
 
   predictPath(pos, vel) {
@@ -125,27 +106,22 @@ class RacingVizMod extends PolyMod {
     const drag = 0.985;
     const accel = 3.5;
     const maxTurn = 1.8;
-
     for (let i = 0; i < this.predSteps; i++) {
       const speed = Math.hypot(cvel.x, cvel.z) || 0.01;
       const fwdX = cvel.x / speed;
       const fwdZ = cvel.z / speed;
-
       cvel.x += fwdX * accel * dt;
       cvel.z += fwdZ * accel * dt;
       cvel.x *= drag;
       cvel.z *= drag;
-
       const perpX = -fwdZ;
       const perpZ = fwdX;
       const steer = Math.sin(i * 0.12 + performance.now() * 0.00005) * maxTurn * dt * speed * 0.015;
       cvel.x += perpX * steer;
       cvel.z += perpZ * steer;
-
       cpos.x += cvel.x * dt;
-      cpos.y = pos.y - 0.5; // keep low to track surface
+      cpos.y = pos.y - 0.5;
       cpos.z += cvel.z * dt;
-
       path.push({pos: {...cpos}, speed: Math.hypot(cvel.x, cvel.z)});
     }
     return path;
@@ -156,7 +132,6 @@ class RacingVizMod extends PolyMod {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     let prevDir = null;
-
     for (let i = 0; i < n - 1; i++) {
       const p1 = pred[i];
       const p2 = pred[i + 1];
@@ -164,31 +139,24 @@ class RacingVizMod extends PolyMod {
       const len = Math.hypot(dir.x, dir.z) || 0.01;
       const normDir = {x: dir.x / len, z: dir.z / len};
       const speedAvg = (p1.speed + p2.speed) / 2;
-
       let turnAngle = 0;
       if (prevDir) {
         const dot = prevDir.x * normDir.x + prevDir.z * normDir.z;
         turnAngle = Math.acos(Math.max(-1, Math.min(1, dot)));
       }
       prevDir = normDir;
-
       const sharpness = Math.min(1, (turnAngle * speedAvg) / (Math.PI * 40));
-      const hue = 120 - sharpness * 120; // green → yellow → red
+      const hue = 120 - sharpness * 120;
       const alpha = (1 - i / n) * 0.9;
-
       ctx.lineWidth = 6 + sharpness * 4;
       ctx.strokeStyle = `hsla(${hue}, 100%, 50%, ${alpha})`;
-
       const s1 = this.worldToScreen(p1.pos, cam);
       const s2 = this.worldToScreen(p2.pos, cam);
-
       if (s1?.z > 0 && s2?.z > 0) {
         ctx.beginPath();
         ctx.moveTo(s1.x, s1.y);
         ctx.lineTo(s2.x, s2.y);
         ctx.stroke();
-
-        // Draw direction arrow every 8 segments
         if (i % 8 === 0 && i > 5) {
           const ang = Math.atan2(s2.y - s1.y, s2.x - s1.x);
           const alen = 12;
@@ -214,7 +182,6 @@ class RacingVizMod extends PolyMod {
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     ctx.beginPath();
-
     for (let i = 0; i < trail.length; i++) {
       const p = trail[i];
       const x = (p.pos.x % 1024 / 1024) * w;
@@ -223,7 +190,6 @@ class RacingVizMod extends PolyMod {
       ctx.globalAlpha = alpha * 0.8;
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
-
       ctx.fillStyle = `rgba(0,255,136,${alpha})`;
       ctx.fillRect(x - 1, y - 1, 2, 2);
     }
@@ -235,10 +201,8 @@ class RacingVizMod extends PolyMod {
     const w = 200, h = 200;
     ctx.strokeStyle = '#ffaa00';
     ctx.lineWidth = 1.5;
-    ctx.lineCap = 'round';
     ctx.globalAlpha = 0.6;
     ctx.beginPath();
-
     for (let i = 0; i < pred.length; i += 3) {
       const p = pred[i];
       const x = (p.pos.x % 1024 / 1024) * w;
@@ -254,17 +218,13 @@ class RacingVizMod extends PolyMod {
     let dx = pos.x - (cam.position?.x || 0);
     let dy = pos.y - (cam.position?.y || 0);
     let dz = pos.z - (cam.position?.z || 0);
-
     const yaw = cam.rotation?.yaw || cam.heading || cam.yaw || 0;
     const cy = Math.cos(-yaw), sy = Math.sin(-yaw);
     [dx, dz] = [dx * cy - dz * sy, dx * sy + dz * cy];
-
     const pitch = cam.rotation?.pitch || cam.pitch || 0;
     const cp = Math.cos(-pitch), sp = Math.sin(-pitch);
     [dy, dz] = [dy * cp - dz * sp, dy * sp + dz * cp];
-
     if (dz < 0.01) return null;
-
     const fov = 600 / dz;
     return {
       x: dx * fov + this.overlay.clientWidth / 2,
