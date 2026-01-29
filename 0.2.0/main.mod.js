@@ -17,50 +17,54 @@ class RacingVizMod extends PolyMod {
   postInit = () => {
     const gameCanvas = document.querySelector('canvas');
     if (!gameCanvas) {
-      console.error('[RacingVizMod] No game canvas found - cannot initialize');
+      console.error('[RacingViz] Canvas not found - aborting init');
       return;
     }
 
-    // Main overlay (racing line on track)
+    // Main overlay for racing line
     this.overlay = document.createElement('canvas');
     this.overlay.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:9998;';
-    gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling);
+    gameCanvas.parentNode.insertBefore(this.overlay, gameCanvas.nextSibling || gameCanvas);
     this.ctx = this.overlay.getContext('2d');
+    if (!this.ctx) {
+      console.error('[RacingViz] 2D context failed');
+      return;
+    }
 
-    // Minimap (trajectory history)
+    // Minimap for trajectory
     this.minimap = document.createElement('canvas');
     this.minimap.style.cssText = 'position:fixed;bottom:10px;right:10px;width:200px;height:200px;pointer-events:none;z-index:9999;background:rgba(0,0,0,0.4);border:2px solid #444;border-radius:8px;';
     document.body.appendChild(this.minimap);
     this.minimapCtx = this.minimap.getContext('2d');
 
-    // Resize handler
+    // Resize + DPR
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       this.overlay.width = gameCanvas.clientWidth * dpr;
       this.overlay.height = gameCanvas.clientHeight * dpr;
-      if (this.ctx) this.ctx.scale(dpr, dpr);
+      this.ctx.scale(dpr, dpr);
 
       this.minimap.width = 200 * dpr;
       this.minimap.height = 200 * dpr;
-      if (this.minimapCtx) this.minimapCtx.scale(dpr, dpr);
+      this.minimapCtx.scale(dpr, dpr);
     };
     resize();
     window.addEventListener('resize', resize);
     new ResizeObserver(resize).observe(gameCanvas);
 
-    // Keybinds
+    // Keys
     document.addEventListener('keydown', (e) => {
       if (e.code === 'KeyT') {
         this.enabled = !this.enabled;
-        console.log(`[RacingVizMod] ${this.enabled ? 'ENABLED' : 'DISABLED'}`);
+        console.log(`[RacingViz] ${this.enabled ? 'ON' : 'OFF'}`);
       }
       if (e.code === 'KeyR') {
         this.trail = [];
-        console.log('[RacingVizMod] Trail cleared');
+        console.log('[RacingViz] Trail cleared');
       }
     });
 
-    // Main loop
+    // RAF loop - poll car position here (safe, late)
     const loop = () => {
       requestAnimationFrame(loop);
       if (!this.enabled) return;
@@ -69,15 +73,15 @@ class RacingVizMod extends PolyMod {
       this.minimapCtx.clearRect(0, 0, 200, 200);
 
       const car = game?.localPlayer?.car;
-      if (!car?.position) return;
+      if (!car || !car.position) return;
 
-      // Poll & record trail (every ~33ms = ~30fps to avoid spam)
+      // Record trail ~30fps
       const now = performance.now();
       if (now - this.lastRecordTime > 33) {
         const vel = car.velocity || {x:0, y:0, z:0};
         const speed = Math.hypot(vel.x, vel.z);
         this.trail.push({
-          pos: {x: car.position.x, y: car.position.y - 0.5, z: car.position.z},
+          pos: {x: car.position.x, y: (car.position.y || 0) - 0.5, z: car.position.z},
           speed
         });
         if (this.trail.length > this.maxTrail) this.trail.shift();
@@ -85,7 +89,7 @@ class RacingVizMod extends PolyMod {
       }
 
       const cam = game?.camera;
-      if (!cam?.position) return;
+      if (!cam || !cam.position) return;
 
       const pred = this.predictPath(car.position, car.velocity || {x:0,y:0,z:0});
 
@@ -95,8 +99,11 @@ class RacingVizMod extends PolyMod {
     };
     loop();
 
-    console.log('[RacingVizMod] Loaded – T toggle, R clear trail');
+    console.log('[RacingViz] Loaded successfully - T toggle / R clear');
   };
+
+  // predictPath, drawRacingLine, drawTrajectoryMinimap, drawPredMinimap, worldToScreen functions remain the same as previous version
+  // (copy them from your last working code or the one I sent before – they didn't change)
 
   predictPath(pos, vel) {
     const path = [{pos: {...pos}, speed: Math.hypot(vel.x, vel.z)}];
@@ -128,6 +135,7 @@ class RacingVizMod extends PolyMod {
   }
 
   drawRacingLine(ctx, cam, pred) {
+    // ... (same as before - copy from previous)
     const n = pred.length;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
