@@ -3,7 +3,6 @@ import { PolyMod, MixinType } from "https://cdn.polymodloader.com/PolyTrackMods/
 class RacingVizMod extends PolyMod {
   constructor() {
     super();
-    this.id = "racing-viz-mod";
     this.enabled = true;
     this.trail = [];
     this.maxTrail = 240;
@@ -19,7 +18,7 @@ class RacingVizMod extends PolyMod {
 
   init = (pml) => {
     this.pml = pml;
-    console.log("[RacingVizMod] init() - waiting for postInit to apply mixin");
+    console.log("[RacingVizMod] init() - ready for postInit");
   };
 
   postInit = () => {
@@ -31,7 +30,7 @@ class RacingVizMod extends PolyMod {
       return;
     }
 
-    // === MAIN OVERLAY (racing line) ===
+    // Main overlay for racing line
     this.overlay = document.createElement("canvas");
     this.overlay.style.cssText =
       "position:absolute;top:0;left:0;pointer-events:none;z-index:9999;";
@@ -42,7 +41,7 @@ class RacingVizMod extends PolyMod {
       return;
     }
 
-    // === MINIMAP (GPS style) ===
+    // GPS-style minimap
     this.minimap = document.createElement("canvas");
     this.minimap.style.cssText =
       "position:fixed;bottom:12px;right:12px;width:220px;height:220px;" +
@@ -50,12 +49,8 @@ class RacingVizMod extends PolyMod {
       "border:2px solid #0f8;border-radius:10px;";
     document.body.appendChild(this.minimap);
     this.minimapCtx = this.minimap.getContext("2d");
-    if (!this.minimapCtx) {
-      console.error("[RacingVizMod] failed to get minimap 2D context");
-      return;
-    }
 
-    // Resize + DPR support
+    // Resize + DPR
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
       this.overlay.width = gameCanvas.clientWidth * dpr;
@@ -70,7 +65,7 @@ class RacingVizMod extends PolyMod {
     window.addEventListener("resize", resize);
     new ResizeObserver(resize).observe(gameCanvas);
 
-    // Keybinds (7 toggle, 9 clear)
+    // Keybinds: 7 toggle, 9 clear
     document.addEventListener("keydown", (e) => {
       if (e.code === "Digit7" || e.code === "Numpad7") {
         this.enabled = !this.enabled;
@@ -82,14 +77,14 @@ class RacingVizMod extends PolyMod {
       }
     });
 
-    // === SAFE MIXIN REGISTRATION (in postInit) ===
+    // === SAFE MIXIN (postInit timing) ===
     try {
       if (window.Car && window.Car.prototype && this.pml) {
         this.pml.registerClassMixin(
           "Car.prototype",
           "update",
           MixinType.INSERT,
-          "this.position.x =",  // common position update token
+          "this.position.x =",  // token near position update
           (code) => `${code}
             const mod = ActivePolyModLoader?.getMod?.("racing-viz-mod");
             if (mod && game?.localPlayer?.car === this) {
@@ -104,20 +99,20 @@ class RacingVizMod extends PolyMod {
           `
         );
         this.mixinApplied = true;
-        console.log("[RacingVizMod] Mixin registered successfully on Car.update");
+        console.log("[RacingVizMod] Mixin registered on Car.update");
       } else {
-        console.warn("[RacingVizMod] Car or pml not available yet - mixin skipped");
+        console.warn("[RacingVizMod] Car not available - skipping mixin");
       }
     } catch (e) {
-      console.warn("[RacingVizMod] Mixin registration failed:", e.message, "- using polling fallback");
+      console.warn("[RacingVizMod] Mixin failed:", e.message, "- using polling");
     }
 
-    // Wait for game globals before starting loop
+    // Wait for game globals
     const waitGame = setInterval(() => {
       if (window.game && window.game.localPlayer && window.game.camera) {
         this.gameReady = true;
         clearInterval(waitGame);
-        console.log("[RacingVizMod] Game ready - visualization loop starting");
+        console.log("[RacingVizMod] Game ready - visualization starting");
         this.startLoop();
       }
     }, 100);
@@ -133,7 +128,7 @@ class RacingVizMod extends PolyMod {
         const cam = window.game.camera;
         if (!car?.position || !cam?.position) return;
 
-        // Polling fallback if mixin didn't apply
+        // Polling fallback
         const now = performance.now();
         if (!this.mixinApplied && now - this.lastSample > 33) {
           const vel = car.velocity || { x: 0, y: 0, z: 0 };
@@ -146,11 +141,11 @@ class RacingVizMod extends PolyMod {
           this.lastSample = now;
         }
 
-        // Clear canvases
+        // Clear
         this.ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
         this.minimapCtx.clearRect(0, 0, 220, 220);
 
-        // Draw everything
+        // Draw
         const pred = this.predict(car.position, car.velocity || { x: 0, y: 0, z: 0 });
         this.drawTrajectory(this.ctx, cam, this.trail);
         this.drawPrediction(this.ctx, cam, pred);
@@ -225,11 +220,10 @@ class RacingVizMod extends PolyMod {
     const cx = w / 2, cy = h / 2;
     const scale = 0.25;
 
-    // Background
     ctx.fillStyle = "rgba(10,25,10,0.8)";
     ctx.fillRect(0, 0, w, h);
 
-    // Trail (past path)
+    // Trail
     ctx.strokeStyle = "#00ff88";
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -244,7 +238,7 @@ class RacingVizMod extends PolyMod {
     ctx.globalAlpha = 1;
     ctx.stroke();
 
-    // Prediction (future path)
+    // Prediction
     ctx.strokeStyle = "#ffaa00";
     ctx.lineWidth = 1.8;
     ctx.globalAlpha = 0.7;
@@ -258,7 +252,7 @@ class RacingVizMod extends PolyMod {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // Player position arrow (rotates with heading)
+    // Player arrow
     if (car?.rotation) {
       const heading = car.rotation.yaw || car.heading || 0;
       const px = cx + car.position.x * scale;
@@ -276,14 +270,14 @@ class RacingVizMod extends PolyMod {
       ctx.restore();
     }
 
-    // Checkpoints & finish (if game exposes them)
+    // Checkpoints (if exposed)
     if (window.game?.track?.checkpoints?.length) {
       const cps = window.game.track.checkpoints;
       cps.forEach((cp, idx) => {
         const cxPos = cx + (cp.x || cp.position?.x || 0) * scale;
         const cyPos = cy + (cp.z || cp.position?.z || 0) * scale;
         ctx.beginPath();
-        ctx.arc(cxPos, cyPos, 10, 0, Math.PI * 2);
+        ctx.arc(cxPos, cyPos, 10, 0, Math.PI*2);
         ctx.fillStyle = idx === cps.length - 1 ? "#ff4444" : "#00aaff";
         ctx.fill();
         ctx.strokeStyle = "#ffffff";
